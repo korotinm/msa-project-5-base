@@ -1,0 +1,27 @@
+@startuml
+title Генерация прайс-листов. C4 Context
+
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Context.puml
+
+skinparam defaultFontName Arial
+skinparam ArrowColor blue
+!pragma layout elk
+
+Person(b2b, "B2B-клиент", "получает кастомный прайс-лист")
+Person(manager, "Менеджер по продажам", "следит за выгрузками и отправляет прайсы клиентам")
+
+System(price_export, "Генератор прайс-листов", "K8s CronJob, каждое утро в 06:00 собирает CSV по каждому клиенту")
+System_Ext(shop, "Онлайн-магазин", "микросервисы: каталог, клиенты, цены")
+SystemDb_Ext(shop_db, "PostgreSQL", "products, categories, clients, client_prices")
+System_Ext(storage, "Объектное хранилище", "S3 / GCS, готовые CSV")
+System_Ext(monitoring, "Мониторинг и логи", "Prometheus, Grafana, ELK")
+
+Rel(price_export, shop_db, "Читает данные", "SQL, read-only")
+Rel(price_export, storage, "Складывает прайс-листы", "HTTPS")
+Rel(price_export, monitoring, "Метрики и логи запуска")
+Rel(shop, shop_db, "Пишет данные")
+Rel(manager, storage, "Скачивает прайс-листы")
+Rel(manager, b2b, "Отправляет прайс-лист")
+Rel(b2b, shop, "Работает с каталогом")
+
+@enduml

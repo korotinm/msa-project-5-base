@@ -1,0 +1,32 @@
+@startuml
+title Генерация прайс-листов. C4 Container
+
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+skinparam defaultFontName Arial
+skinparam ArrowColor blue
+!pragma layout elk
+
+Person(manager, "Менеджер по продажам")
+
+System_Boundary(k8s, "Kubernetes (облако)") {
+    Container(cronjob, "CronJob price-export", "K8s CronJob, schedule 0 6 * * *", "создаёт Job в 06:00, concurrencyPolicy: Forbid")
+    Container(job, "Pod price-export", "Docker-образ, Python", "один SQL с JOIN, потоковая запись CSV по клиентам, загрузка в хранилище")
+    Container(secret, "Secret / ConfigMap", "K8s", "реквизиты БД и хранилища, параметры выгрузки")
+}
+
+System_Boundary(shop, "Онлайн-магазин") {
+    ContainerDb(shop_db, "PostgreSQL", "реплика для чтения", "products, categories, clients, client_prices")
+}
+
+System_Ext(storage, "Объектное хранилище", "S3 / GCS")
+System_Ext(monitoring, "Мониторинг и логи", "Prometheus + Grafana, ELK")
+
+Rel(cronjob, job, "Запускает по расписанию")
+Rel(job, secret, "Читает конфигурацию")
+Rel(job, shop_db, "SELECT с JOIN четырёх таблиц", "psycopg2")
+Rel(job, storage, "Загружает CSV по клиентам")
+Rel(job, monitoring, "Метрики, логи, статус Job")
+Rel(manager, storage, "Забирает прайс-листы")
+
+@enduml
