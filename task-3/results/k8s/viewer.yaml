@@ -1,0 +1,18 @@
+# Вспомогательный под, чтобы посмотреть, что лежит на томе с результатами выгрузки
+apiVersion: v1
+kind: Pod
+metadata:
+  name: viewer
+spec:
+  containers:
+    - name: viewer
+      image: shipments-export:1.0
+      imagePullPolicy: Never
+      command: ["sleep", "3600"]
+      volumeMounts:
+        - name: data
+          mountPath: /data
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: export-data
