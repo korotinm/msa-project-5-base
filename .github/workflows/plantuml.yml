@@ -1,0 +1,83 @@
+name: PlantUML Diagrams
+
+on:
+  push:
+    branches:
+      - '**'
+    paths:
+      - '**/*.puml'
+      - '.github/workflows/plantuml.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: plantuml-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Keep in sync with the jar configured in the IDE's PlantUML plugin, otherwise
+  # locally previewed and CI-committed diagrams drift apart.
+  # >= 1.2024.6 bundles ELK (`!pragma layout elk`) inside plantuml.jar, so no
+  # separate elk-full.jar or Graphviz install is needed. ELK needs Java >= 17.
+  PLANTUML_VERSION: '1.2026.2'
+
+jobs:
+  generate-diagrams:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Download PlantUML
+        run: |
+          curl -fsSL -o plantuml.jar \
+            "https://repo1.maven.org/maven2/net/sourceforge/plantuml/plantuml/${PLANTUML_VERSION}/plantuml-${PLANTUML_VERSION}.jar"
+          # -version проверяет наличие Graphviz и возвращает 16, если dot не найден.
+          # Graphviz здесь не нужен: ELK рендерит без него, а рендер защищён -failfast2.
+          java -DPLANTUML_LIMIT_SIZE=16384 -jar plantuml.jar -version || true
+
+      - name: Generate Diagrams
+        run: |
+          # Diagrams live next to the task they belong to (Task1/, Task3/, ...),
+          # so collect every .puml in the repo instead of a fixed diagrams/ tree.
+          find . -type f -name '*.puml' -not -path './.git/*' -print0 | sort -z > puml.list
+          if [ ! -s puml.list ]; then
+            echo "No .puml files found."
+            exit 0
+          fi
+          echo "Rendering:"
+          tr '\0' '\n' < puml.list
+          # -charset UTF-8: диаграммы содержат кириллицу.
+          # PLANTUML_LIMIT_SIZE: без него PNG молча обрезается на 4096px по любой
+          # стороне, а контейнерная диаграмма уже шире.
+          xargs -0 java -DPLANTUML_LIMIT_SIZE=16384 -jar plantuml.jar -tpng -failfast2 -charset UTF-8 < puml.list
+          rm -f puml.list
+
+      - name: Upload Diagrams
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagrams
+          path: '**/*.png'
+          if-no-files-found: warn
+
+      - name: Commit Diagrams
+        if: github.event_name == 'push'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add -A -- '*.png'
+          if git diff --cached --quiet; then
+            echo "No diagram changes to commit."
+            exit 0
+          fi
+          git commit -m "Automated diagram generation [skip ci]"
+          git push origin "HEAD:${GITHUB_REF_NAME}"

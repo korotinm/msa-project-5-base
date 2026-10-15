@@ -1,0 +1,39 @@
+@startuml
+title TradeWare. C4 Container (Spring Batch)
+
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+skinparam defaultFontName Arial
+skinparam ArrowColor blue
+!pragma layout elk
+
+Person(worker, "Сотрудник склада", "загружает CSV с остатками и перемещениями")
+
+System_Boundary(tradeware, "TradeWare") {
+    Container(ui, "Фронтенд", "Angular, WebSockets", "загрузка отчёта, статус обработки")
+    Container(monolith, "ERP-монолит", "Java 11, WildFly", "принимает файл, первичная валидация, ставит задачу в очередь")
+
+    ContainerDb(storage, "Хранилище отчётов", "MinIO (S3 API)", "исходные CSV, файлы с ошибками")
+    ContainerDb(main_db, "PostgreSQL: номенклатура", "PostgreSQL", "остатки, справочники, upload_task (очередь)")
+
+    Container(batch, "Batch-сервис", "Spring Batch, Java 11", "Job на файл: чтение, валидация, обогащение, запись пачками. Реплики в k8s")
+    ContainerDb(batch_repo, "JobRepository", "PostgreSQL (схема batch)", "состояние Job и шагов, restart")
+}
+
+System_Boundary(obs, "Мониторинг и логи") {
+    Container(prom, "Prometheus + Grafana", "метрики Micrometer")
+    Container(elk, "ELK", "логи Job")
+}
+
+Rel(worker, ui, "Загружает CSV")
+Rel(ui, monolith, "POST /upload", "HTTPS")
+Rel(monolith, storage, "Сохраняет файл", "S3 API")
+Rel(monolith, main_db, "Создаёт upload_task (NEW)", "JDBC, в одной транзакции")
+Rel(batch, main_db, "Забирает задачи (SKIP LOCKED), читает справочники, пишет остатки", "JDBC batch")
+Rel(batch, storage, "Читает файл потоком", "S3 API")
+Rel(batch, batch_repo, "Состояние Job")
+Rel(batch, prom, "Метрики")
+Rel(batch, elk, "Логи")
+Rel(monolith, ui, "Статус обработки (читает upload_task)", "WebSocket")
+
+@enduml
