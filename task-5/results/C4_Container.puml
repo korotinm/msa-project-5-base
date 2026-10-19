@@ -1,0 +1,66 @@
+@startuml
+title TradeWare. C4 Container (To Be, мониторинг, логирование, оповещение)
+
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+skinparam defaultFontName Arial
+skinparam ArrowColor blue
+!pragma layout elk
+
+AddRelTag("metrics", $textColor="#2e7d32", $lineColor="#2e7d32")
+AddRelTag("logs", $textColor="#e65100", $lineColor="#e65100")
+AddRelTag("alerts", $textColor="#c62828", $lineColor="#c62828")
+
+Person(worker, "Сотрудник склада")
+Person(devops, "DevOps / дежурный инженер")
+Person(analyst, "Аналитик, руководитель логистики")
+
+System_Boundary(app, "Приложение") {
+    Container(ui, "Фронтенд", "Angular")
+    Container(monolith, "ERP-монолит", "Java 11, WildFly", "приём файла, upload_task, статус обработки")
+    Container(batch, "Batch-сервис", "Spring Batch, Micrometer", "Job на файл, реплики в k8s")
+    ContainerDb(storage, "MinIO", "S3 API")
+    ContainerDb(main_db, "PostgreSQL", "номенклатура, upload_task, JobRepository")
+}
+
+System_Boundary(obs, "Наблюдаемость") {
+    Container(prom, "Prometheus", "TSDB, pull каждые 15 с", "метрики сервисов, БД, MinIO, k8s")
+    Container(exporters, "Exporters", "postgres_exporter, node_exporter, kube-state-metrics, MinIO metrics", "технические метрики инфраструктуры")
+    Container(grafana, "Grafana", "дашборды", "бизнес и технические панели")
+    Container(alertmanager, "Alertmanager", "правила и маршрутизация", "группировка, подавление дублей, эскалация")
+
+    Container(filebeat, "Filebeat", "DaemonSet в k8s, агент на VM", "собирает JSON-логи, добавляет метаданные")
+    Container(logstash, "Logstash", "буфер и парсинг", "нормализация, маскирование ПДн, маршрутизация индексов")
+    ContainerDb(es, "Elasticsearch", "индексы logs-app-YYYY.MM.dd", "хранение и поиск, ILM 14 дней hot / 60 архив")
+    Container(kibana, "Kibana", "поиск логов, дашборды ошибок")
+}
+
+System_Ext(notify, "Каналы оповещения", "email (SMTP), корпоративный мессенджер")
+
+Rel(worker, ui, "Загружает CSV")
+Rel(ui, monolith, "HTTPS")
+Rel(monolith, storage, "S3 API")
+Rel(monolith, main_db, "JDBC")
+Rel(batch, storage, "S3 API")
+Rel(batch, main_db, "JDBC batch")
+
+Rel(prom, monolith, "Scrape /metrics (JMX exporter, WildFly)", "HTTP", $tags="metrics")
+Rel(prom, batch, "Scrape /actuator/prometheus", "HTTP", $tags="metrics")
+Rel(prom, exporters, "Scrape", "HTTP", $tags="metrics")
+Rel(exporters, main_db, "Статистика БД", $tags="metrics")
+Rel(grafana, prom, "PromQL", $tags="metrics")
+Rel(prom, alertmanager, "Сработавшие правила", $tags="alerts")
+Rel(alertmanager, notify, "Алерты", $tags="alerts")
+Rel(notify, devops, "Уведомление", $tags="alerts")
+
+Rel(monolith, filebeat, "JSON-логи (файл)", $tags="logs")
+Rel(batch, filebeat, "JSON-логи (stdout)", $tags="logs")
+Rel(filebeat, logstash, "Beats protocol", $tags="logs")
+Rel(logstash, es, "Bulk index", $tags="logs")
+Rel(kibana, es, "Поиск", $tags="logs")
+
+Rel(devops, grafana, "Дашборды")
+Rel(devops, kibana, "Разбор инцидентов по file_id")
+Rel(analyst, grafana, "Бизнес-дашборд: объём, SLA, ошибки по складам")
+
+@enduml

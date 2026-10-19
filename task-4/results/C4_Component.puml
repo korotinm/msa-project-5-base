@@ -1,0 +1,38 @@
+@startuml
+title Batch-сервис. C4 Component (Spring Batch Job «обработка отчёта»)
+
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+skinparam defaultFontName Arial
+skinparam ArrowColor blue
+!pragma layout elk
+
+ContainerDb(storage, "MinIO", "S3 API")
+ContainerDb(main_db, "PostgreSQL: номенклатура", "upload_task, справочники, остатки")
+ContainerDb(batch_repo, "JobRepository", "PostgreSQL")
+
+Container_Boundary(batch, "Batch-сервис (Spring Batch)") {
+    Component(poller, "Task Poller", "Spring @Scheduled", "SELECT ... FOR UPDATE SKIP LOCKED из upload_task, запускает Job с параметром fileId")
+    Component(launcher, "JobLauncher", "Spring Batch", "запуск и restart Job")
+    Component(reader, "ItemReader", "FlatFileItemReader", "поточное чтение CSV из MinIO")
+    Component(validator, "Validator", "ItemProcessor", "формат и целостность строки")
+    Component(enricher, "Enricher", "ItemProcessor", "обогащение справочными данными, кэш справочника")
+    Component(writer, "ItemWriter", "JdbcBatchItemWriter", "UPSERT остатков пачками (chunk = 500)")
+    Component(skip, "Skip / Retry policy", "Spring Batch", "skip битых строк, retry временных ошибок БД")
+    Component(error_writer, "Error Writer", "ItemWriter", "строки с ошибками в отчёт для пользователя")
+}
+
+Rel(poller, main_db, "Забирает задачу")
+Rel(poller, launcher, "Запускает Job")
+Rel(launcher, batch_repo, "Фиксирует состояние")
+Rel(launcher, reader, "Step: load")
+Rel(reader, storage, "Читает файл")
+Rel(reader, validator, "Строка")
+Rel(validator, enricher, "Валидная строка")
+Rel(validator, error_writer, "Невалидная строка")
+Rel(enricher, writer, "Обогащённая строка")
+Rel(writer, main_db, "Пачка UPSERT")
+Rel(error_writer, storage, "Файл ошибок")
+Rel(skip, writer, "Политика на шаге")
+
+@enduml

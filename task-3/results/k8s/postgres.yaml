@@ -1,0 +1,81 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-credentials
+type: Opaque
+stringData:
+  POSTGRES_DB: logistics
+  POSTGRES_USER: export
+  POSTGRES_PASSWORD: export
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init
+data:
+  init.sql: |
+    CREATE TABLE shipments (
+        id          bigint PRIMARY KEY,
+        client_id   int NOT NULL,
+        driver_id   int NOT NULL,
+        vehicle_id  int NOT NULL,
+        status      text NOT NULL,
+        distance_km numeric(8, 2) NOT NULL,
+        created_at  timestamp NOT NULL
+    );
+    -- 100 тыс. строк, нижняя граница из условия (50-200 тыс.)
+    INSERT INTO shipments
+    SELECT g,
+           (random() * 50000)::int,
+           (random() * 5000)::int,
+           (random() * 2000)::int,
+           (ARRAY['created', 'in_transit', 'delivered', 'cancelled'])[1 + (random() * 3)::int],
+           (random() * 1500)::numeric(8, 2),
+           now() - (random() * 30) * interval '1 day'
+    FROM generate_series(1, 100000) g;
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16
+          ports:
+            - containerPort: 5432
+          envFrom:
+            - secretRef:
+                name: db-credentials
+          volumeMounts:
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "export", "-d", "logistics"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: init
+          configMap:
+            name: postgres-init
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
